@@ -1,0 +1,13 @@
+{
+  "extends": "@react-native/typescript-config",
+  "compilerOptions": {
+    "jsx": "react",
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "skipLibCheck": true,
+    "strict": false,
+    "types": ["react", "react-native"],
+    "baseUrl": "."
+  },
+  "include": ["App.tsx", "src/**/*"]
+}
