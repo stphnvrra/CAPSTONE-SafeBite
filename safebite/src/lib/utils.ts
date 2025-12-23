@@ -1,6 +1,4 @@
-/**
- * Utility functions for the SafeBite app
- */
+// General-purpose utilities: debounce/throttle, distance calc, bounds check, and address formatting
 
 /**
  * Debounce function to limit the rate of function calls
@@ -9,6 +7,7 @@
  * @param immediate Trigger on leading edge instead of trailing
  * @returns Debounced function
  */
+// Returns a debounced wrapper that delays invoking until wait has elapsed
 export function debounce<T extends (...args: any[]) => any>(
   func: T,
   wait: number,
@@ -37,6 +36,7 @@ export function debounce<T extends (...args: any[]) => any>(
  * @param limit Time limit in milliseconds
  * @returns Throttled function
  */
+// Returns a throttled wrapper that limits invocations to at most once per period
 export function throttle<T extends (...args: any[]) => any>(
   func: T,
   limit: number
@@ -62,6 +62,7 @@ export function throttle<T extends (...args: any[]) => any>(
  * @param lon2 Longitude of second point
  * @returns Distance in kilometers
  */
+// Computes great-circle distance in kilometers between two coordinates
 export function calculateDistance(
   lat1: number,
   lon1: number,
@@ -85,6 +86,7 @@ export function calculateDistance(
  * @param lon Longitude
  * @returns true if within bounds
  */
+// Checks whether a coordinate lies within the configured Butuan City bounding box
 export function isWithinButuanBounds(lat: number, lon: number): boolean {
   const BUTUAN_BOUNDS = {
     minLon: 125.44627456871875,
@@ -106,6 +108,7 @@ export function isWithinButuanBounds(lat: number, lon: number): boolean {
  * @param address Raw address string
  * @returns Formatted address
  */
+// Normalizes and shortens a raw address string for UI display
 export function formatAddress(address?: string): string {
   if (!address) return 'Butuan City';
   

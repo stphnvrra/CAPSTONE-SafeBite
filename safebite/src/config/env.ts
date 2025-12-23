@@ -1,8 +1,7 @@
-// Centralized runtime configuration. Replace placeholders with real secrets.
+// Load environment variables from .env file via react-native-dotenv
+import { MAPBOX_ACCESS_TOKEN } from '@env';
 
 export const CONFIG = {
-  MAPBOX_ACCESS_TOKEN: 'pk.eyJ1Ijoic3RlcGhlYW5hdmFycmEiLCJhIjoiY21lM3o2bWtqMDdnZTJrc2U3a2tvcTB3NyJ9.qznl71nZkwjIe3nJ5US7qw',
-  // Google Places API removed - now using OpenStreetMap/Overpass API for restaurant data
+  MAPBOX_ACCESS_TOKEN: MAPBOX_ACCESS_TOKEN || '',
 } as const;
-
 

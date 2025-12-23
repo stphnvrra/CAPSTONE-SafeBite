@@ -14,8 +14,6 @@ import { CONFIG } from '../config/env';
 import { debounce } from '../lib/utils';
 import { createSearchSessionToken } from '../lib/places';
 
-// No geographic restrictions - search worldwide
-
 interface SearchResult {
   id: string;
   text: string;
@@ -101,15 +99,16 @@ export interface SearchBoxRef {
   performSearch: (query: string) => Promise<void>;
 }
 
-const RestaurantSearchBox = forwardRef<SearchBoxRef, RestaurantSearchBoxProps>(({
+// Provides restaurant/place search; UI is a search bar with suggestions list and loading states
+const RestaurantSearchBox = forwardRef<SearchBoxRef, RestaurantSearchBoxProps>(({ 
   onPlaceSelect,
   onSearchFocus,
   onSearchBlur,
-  placeholder = "Search places (local Butuan + worldwide)",
+  placeholder = "Search dining in Butuan City",
   center,
   accessToken,
   options = {
-    types: 'poi,address',
+    types: 'poi',
     proximity: center,
     language: 'en',
     limit: 10,
@@ -130,6 +129,7 @@ const RestaurantSearchBox = forwardRef<SearchBoxRef, RestaurantSearchBoxProps>((
   const sessionToken = useRef<string>(options.sessionToken || createSearchSessionToken());
 
   // Smart search function: local Butuan search + worldwide capability
+  // Queries Search Box /suggest with Butuan constraints and formats suggestions
   const performSearch = useCallback(async (searchQuery: string) => {
     if (!searchQuery.trim() || searchQuery.length < 2) {
       setSuggestions([]);
@@ -173,8 +173,20 @@ const RestaurantSearchBox = forwardRef<SearchBoxRef, RestaurantSearchBoxProps>((
       const suggestions = data.suggestions || [];
       console.log(`📍 Got ${suggestions.length} suggestions`);
       
+      // Filter strictly to Butuan City using textual locality since /suggest lacks coordinates
+      const filtered = (suggestions as any[]).filter((s: any) => {
+        const formatted = (s.place_formatted || s.full_address || '').toLowerCase();
+        const name = (s.name || s.text || '').toLowerCase();
+        return (
+          formatted.includes('butuan') ||
+          name.includes('butuan') ||
+          // Some records include city in context array
+          Array.isArray(s.context) && s.context.some((c: any) => String(c?.name || c)?.toLowerCase().includes('butuan'))
+        );
+      });
+
       // Convert to our format - NOTE: suggestions DON'T contain coordinates
-      const formattedSuggestions: Suggestion[] = suggestions.slice(0, 8).map((suggestion: any) => {
+      const formattedSuggestions: Suggestion[] = filtered.slice(0, 8).map((suggestion: any) => {
         const placeName = suggestion.name || suggestion.text || 'Restaurant';
         const placeAddress = suggestion.place_formatted || suggestion.full_address || 'Butuan City';
         
@@ -209,6 +221,7 @@ const RestaurantSearchBox = forwardRef<SearchBoxRef, RestaurantSearchBoxProps>((
   const debouncedSearch = debounce(performSearch, 300);
 
   // Reverse geocoding function - disabled when using Search Box API only
+  // Stub for reverse geocoding when only Search Box API is used
   const reverseGeocode = useCallback(async (coordinates: [number, number]) => {
     // Not implemented with Search Box API only
     console.log('⚠️ Reverse geocoding not available with Search Box API only');
@@ -222,6 +235,7 @@ const RestaurantSearchBox = forwardRef<SearchBoxRef, RestaurantSearchBoxProps>((
   }), [reverseGeocode, performSearch]);
 
   // Handle input changes
+  // Updates input value and triggers debounced search for queries >= 2 chars
   const handleInputChange = (text: string) => {
     setQuery(text);
     
@@ -242,6 +256,7 @@ const RestaurantSearchBox = forwardRef<SearchBoxRef, RestaurantSearchBoxProps>((
   };
 
   // Handle suggestion selection
+  // Retrieves full details via /retrieve then emits a normalized PlaceResult
   const handleSuggestionSelect = async (suggestion: Suggestion) => {
     setQuery(suggestion.name);
     setSuggestions([]);

@@ -9,16 +9,20 @@ import com.facebook.react.ReactNativeHost
 import com.facebook.react.ReactPackage
 import com.facebook.react.defaults.DefaultReactHost.getDefaultReactHost
 import com.facebook.react.defaults.DefaultReactNativeHost
+// Removed AR packages
 
+// Configures the React Native host and registers the Unity AR launcher package
 class MainApplication : Application(), ReactApplication {
 
   override val reactNativeHost: ReactNativeHost =
       object : DefaultReactNativeHost(this) {
-        override fun getPackages(): List<ReactPackage> =
-            PackageList(this).packages.apply {
-              // Packages that cannot be autolinked yet can be added manually here, for example:
-              // add(MyReactNativePackage())
-            }
+        // Provides the list of RN packages, including our custom native module
+        override fun getPackages(): List<ReactPackage> {
+            val packages = PackageList(this).packages.toMutableList()
+            // Add our custom Unity AR Launcher package
+            packages.add(UnityARLauncherPackage())
+            return packages
+        }
 
         override fun getJSMainModuleName(): String = "index"
 
@@ -31,6 +35,7 @@ class MainApplication : Application(), ReactApplication {
   override val reactHost: ReactHost
     get() = getDefaultReactHost(applicationContext, reactNativeHost)
 
+  // Initializes the React Native runtime on application startup
   override fun onCreate() {
     super.onCreate()
     loadReactNative(this)

@@ -1,3 +1,5 @@
+// Metro bundler configuration - handles bundling JavaScript/TypeScript for React Native
+// Metro is the JavaScript bundler used by React Native apps
 const { getDefaultConfig, mergeConfig } = require('@react-native/metro-config');
 
 /**

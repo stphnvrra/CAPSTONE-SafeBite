@@ -3,6 +3,7 @@ import { Modal, View, Text, Pressable, StyleSheet } from 'react-native';
 
 type Props = { visible: boolean; onConfirm: () => void; onCancel: () => void };
 
+// Asks to confirm logout; UI is a centered modal card with title and Yes/No buttons
 export default function LogoutModal({ visible, onConfirm, onCancel }: Props) {
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onCancel}>

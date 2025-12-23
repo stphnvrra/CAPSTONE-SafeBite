@@ -1,21 +1,21 @@
 import React, { useMemo, useRef, useState, useEffect } from 'react';
 
-// Suppress specific React Fragment warnings from @rnmapbox/maps library
 const originalConsoleError = console.error;
 console.error = (...args) => {
   if (typeof args[0] === 'string' && args[0].includes('Invalid prop') && args[0].includes('React.Fragment') && args[1] === 'sourceID') {
-    // Suppress the known @rnmapbox/maps library React Fragment warning
     return;
   }
   originalConsoleError.apply(console, args);
 };
-import { View, Text, Pressable, StyleSheet, Alert, Switch } from 'react-native';
+import { View, Text, Pressable, StyleSheet, Alert } from 'react-native';
+import { useIsFocused } from '@react-navigation/native';
 import MapboxGL from '@rnmapbox/maps';
 import { CONFIG } from '../config/env';
 import { fetchCrimeZonesByBBox, signOut } from '../lib/firebase';
+import { saveRoute } from '../lib/routes';
 import { getPlaceDetails, createSearchSessionToken } from '../lib/places';
+import { launchUnityARApp, checkUnityARAppInstalled } from '../lib/unityLauncher';
 
-// Place type for search results
 interface PlaceResult {
   id: string;
   name: string;
@@ -26,18 +26,21 @@ interface PlaceResult {
   amenity?: string;
   coordinates: [number, number];
 }
-import { fetchDirectionsAlternatives } from '../lib/mapbox';
-import { selectCrimeSafeRoute, Coordinate } from '../lib/crime';
+import { fetchDirectionsAlternatives, fetchDirectionsViaWaypoint } from '../lib/mapbox';
+import { selectCrimeSafeRoute, Coordinate, routeIntersectsAnyPolygon, normalizeFirestoreCrimeFeatures, getFirstIntersectingPolygon, detourWaypointsAroundPolygon } from '../lib/crime';
 import RestaurantBottomSheet, { RestaurantBottomSheetRef } from '../components/RestaurantBottomSheet';
 import RestaurantSearchBox, { SearchBoxRef } from '../components/RestaurantSearchBox';
 import LogoutModal from '../components/LogoutModal';
 import { ensureLocationPermission } from '../lib/permissions';
-import { getCurrentPosition } from '../lib/location';
+import { getCurrentPosition, watchPosition } from '../lib/location';
 import HeatmapLegend from '../components/HeatmapLegend';
+import SafeRouteModal from '../components/SafeRouteModal';
+
 
 export default function MainMapScreen({ navigation }: any) {
-  // Butuan City geographic constraints - based on official city boundaries
-  const BUTUAN_CENTER: Coordinate = useMemo(() => [125.543061, 8.947200], []); // Exact center of Butuan City
+  const isFocused = useIsFocused();
+  const AndroidMapView: any = MapboxGL.MapView;
+  const BUTUAN_CENTER: Coordinate = useMemo(() => [125.543061, 8.947200], []); 
   const BUTUAN_BOUNDS = useMemo(() => ({ 
     minLon: 125.44627456871875, minLat: 8.750235457081931,
     maxLon: 125.63672866987403, maxLat: 9.051031758534917
@@ -90,16 +93,61 @@ export default function MainMapScreen({ navigation }: any) {
   const [selectedRestaurant, setSelectedRestaurant] = useState<PlaceResult | null>(null);
   const [route, setRoute] = useState<any | null>(null);
   const [logoutVisible, setLogoutVisible] = useState(false);
+  const [safeRouteVisible, setSafeRouteVisible] = useState(false);
+  const riskyBestRef = useRef<any | null>(null);
+  const lastOriginRef = useRef<Coordinate | null>(null);
+  const lastDestRef = useRef<Coordinate | null>(null);
   const sheetRef = useRef<RestaurantBottomSheetRef>(null);
   const searchBoxRef = useRef<SearchBoxRef>(null);
   const [hasLocation, setHasLocation] = useState(false);
   const [currentLocation, setCurrentLocation] = useState<Coordinate | null>(null);
   const [nearbyPlaces, setNearbyPlaces] = useState<PlaceResult[]>([]);
+  const [unityAppInstalled, setUnityAppInstalled] = useState<boolean>(false);
+  const [isSearchingRoute, setIsSearchingRoute] = useState<boolean>(false);
   const cameraRef = useRef<MapboxGL.Camera>(null as any);
   const sessionTokenRef = useRef<string>(createSearchSessionToken());
 
+  // Function: Starts AR navigation by launching the Unity app
+  // - Requires a route to be created first
+  // - Checks if the Unity app is installed
+  async function onStartARNavigation() {
+    try {
+      if (!route) {
+        Alert.alert('No Route', 'Please create a route first before starting AR navigation.');
+        return;
+      }
+      
+      // Check if Unity AR app is installed
+      const isInstalled = await checkUnityARAppInstalled();
+      if (!isInstalled) {
+        Alert.alert(
+          'AR App Required',
+          'The SafeBite AR app (com.safebitear) is not installed. Please install it to use AR navigation features.',
+          [{ text: 'OK' }]
+        );
+        return;
+      }
+      
+      // Launch the Unity AR app
+      await launchUnityARApp();
+      
+      // The Unity app should read the route data from Firestore
+      
+    } catch (error) {
+      console.error('❌ AR Navigation error:', error);
+      Alert.alert('AR Error', 'Failed to start AR navigation. Please try again.');
+    }
+  }
+
+  // Mapbox: set access token once for map usage
   MapboxGL.setAccessToken(CONFIG.MAPBOX_ACCESS_TOKEN);
 
+  // Effect: initial data and setup when the screen mounts
+  // - Loads crime zones for the whole city
+  // - Requests location permission
+  // - Checks Unity app availability
+  // - Positions the camera to city center
+  // - Starts watching the user's location
   useEffect(() => {
     // initial bbox around center
     fetchCrimeZonesByBBox(
@@ -108,6 +156,9 @@ export default function MainMapScreen({ navigation }: any) {
     ).then(setCrimeFeatures).catch(() => {});
     // ask for location so we can show user puck
     ensureLocationPermission().then((ok) => setHasLocation(!!ok));
+    
+    // Check Unity AR app installation status
+    checkUnityARAppInstalled().then(setUnityAppInstalled).catch(() => setUnityAppInstalled(false));
     
     // Set initial camera position to exact Butuan City center
     setTimeout(() => {
@@ -118,30 +169,43 @@ export default function MainMapScreen({ navigation }: any) {
       });
     }, 500);
     
+    // Begin streaming live location updates for 2D map
+    const stopWatching = watchPosition((pos) => {
+      try {
+        const lon = pos.lon;
+        const lat = pos.lat;
+        if (typeof lon === 'number' && typeof lat === 'number') {
+          setCurrentLocation([lon, lat]);
+        }
+      } catch {}
+    });
+    
     // no-op cleanup
-    return () => {};
+    return () => {
+      try { stopWatching?.(); } catch {}
+    };
   }, [BUTUAN_BOUNDS.minLon, BUTUAN_BOUNDS.minLat, BUTUAN_BOUNDS.maxLon, BUTUAN_BOUNDS.maxLat, BUTUAN_CENTER]);
 
-  // Load places when location changes
+  // Effect: when the current location changes, update nearby places
   useEffect(() => {
     if (currentLocation) {
       loadNearbyPlaces({ lat: currentLocation[1], lon: currentLocation[0] });
     }
   }, [currentLocation]);
 
-  // Load initial places around Butuan center
+  // Effect: on mount, load default places around city center
   useEffect(() => {
     loadNearbyPlaces({ lat: BUTUAN_CENTER[1], lon: BUTUAN_CENTER[0] });
   }, [BUTUAN_CENTER]);
 
+  // Function: Loads nearby places for a given coordinate
+  // - Currently minimized because the search box is the primary entry point
   async function loadNearbyPlaces(location: { lat: number; lon: number }) {
     try {
-      console.log('Loading restaurants near:', location);
       
       // Since we now have a functional search box, we don't need to auto-load nearby places
       // Users can search for restaurants using the search box
       setNearbyPlaces([]);
-      console.log('✅ Use the search box to find restaurants in Butuan City');
     } catch (error) {
       console.error('Failed to load nearby restaurants:', error);
       // Set empty array instead of crashing
@@ -149,22 +213,26 @@ export default function MainMapScreen({ navigation }: any) {
     }
   }
 
+  // Function: When tapping near a place marker on the map
+  // - Clears any existing route
+  // - Sets destination and opens the bottom sheet with details
   async function onPlaceMarkerPress(place: PlaceResult) {
     try {
-      // Set destination and get detailed info
+      // Clear any existing route when selecting a new place via marker press
+      if (route) {
+        setRoute(null);
+      }
+      
+      // Set destination and selected restaurant
       setDestination([place.lon, place.lat]);
+      setSelectedRestaurant(place);
       const details = await getPlaceDetails(place.id, sessionTokenRef.current);
       
       // Show place details in bottom sheet
       sheetRef.current?.open({ 
         name: details.name || place.name, 
         address: details.address, 
-        phone: details.phone,
-        website: details.website,
-        cuisine: details.cuisine,
         amenity: details.amenity,
-        openingHours: details.openingHours,
-        description: details.description,
       });
     } catch (error) {
       console.error('Failed to get place details:', error);
@@ -172,11 +240,18 @@ export default function MainMapScreen({ navigation }: any) {
     }
   }
 
-  // Handle place selection from search box
+  // Function: When a place is selected in the search box
+  // - Clears any existing route
+  // - Marks the place on the map
+  // - Opens bottom sheet and centers camera on the place
   async function handlePlaceSelect(place: PlaceResult) {
-    console.log('🎯 Place selected from search:', place);
     
     try {
+      // Clear any existing route when selecting a new place
+      if (route) {
+        setRoute(null);
+      }
+      
       // Show a marker for the selected place
       setNearbyPlaces([{
         ...place,
@@ -190,19 +265,13 @@ export default function MainMapScreen({ navigation }: any) {
       setSelectedRestaurant(place);
       
       // Load detailed info for the bottom sheet
-      console.log('📋 Getting place details...');
       const details = await getPlaceDetails(place.id, sessionTokenRef.current);
-      console.log('📋 Place details:', place);
       
       // Show place details in bottom sheet
       sheetRef.current?.open({
         name: place.name,
         address: place.address,
-        phone: details.phone,
-        website: details.website,
-        amenity: place.amenity[0],
-        openingHours: details.openingHours,
-        description: details.description,
+        amenity: place.amenity,
       });
       
       // Center map on selected place
@@ -218,37 +287,92 @@ export default function MainMapScreen({ navigation }: any) {
     }
   }
 
-  // Create a heatmap point set from polygon centroids with intensity
+  // Create a heatmap point set from polygon/multipolygon centroids with intensity
+  // Derives heatmap point features by computing centroids from polygons and intensity
   const heatmapPoints = useMemo(() => {
-    function centroid(coords: number[][][]): Coordinate | null {
-      // coords[0] is outer ring
-      const ring = coords?.[0] || [];
-      if (ring.length === 0) return null;
-      let x = 0;
-      let y = 0;
-      for (const [lon, lat] of ring) {
-        x += lon;
-        y += lat;
+    function centroid(coords: any): Coordinate | null {
+      if (!coords) return null;
+      // MultiPolygon: number[][][][]
+      if (Array.isArray(coords[0]) && Array.isArray(coords[0][0]) && Array.isArray(coords[0][0][0])) {
+        let sumLon = 0;
+        let sumLat = 0;
+        let count = 0;
+        for (const poly of coords as number[][][][]) {
+          const ring = (poly?.[0] || []) as number[][];
+          for (const pos of ring) {
+            if (Array.isArray(pos) && pos.length >= 2) {
+              sumLon += Number(pos[0]);
+              sumLat += Number(pos[1]);
+              count += 1;
+            }
+          }
+        }
+        if (count === 0) return null;
+        return [sumLon / count, sumLat / count];
       }
-      const n = ring.length;
-      return [x / n, y / n];
+      // Polygon: number[][][]
+      if (Array.isArray(coords[0]) && Array.isArray(coords[0][0])) {
+        const ring = (coords?.[0] || []) as number[][];
+        if (ring.length === 0) return null;
+        let sumLon = 0;
+        let sumLat = 0;
+        for (const pos of ring) {
+          if (Array.isArray(pos) && pos.length >= 2) {
+            sumLon += Number(pos[0]);
+            sumLat += Number(pos[1]);
+          }
+        }
+        const n = ring.length;
+        if (n === 0) return null;
+        return [sumLon / n, sumLat / n];
+      }
+      return null;
     }
     const features = crimeFeatures
       .map((f: any) => {
         const c = centroid(f?.geometry?.coordinates);
-        if (!c) return null;
+        if (!c || !isFinite(c[0]) || !isFinite(c[1])) return null;
         return {
           type: 'Feature',
           geometry: { type: 'Point', coordinates: c },
-          properties: { intensity: Number(f?.properties?.averageCrimeScore ?? 0) },
+          properties: {
+            intensity: Number(f?.properties?.averageCrimeScore ?? 0),
+            count: Number((f?.properties && (f.properties.count ?? f.properties.averageCrimeScore)) ?? 0),
+            riskLevel: String(f?.properties?.riskLevel || '').toLowerCase(),
+            score: Number(f?.properties?.averageCrimeScore ?? 0),
+            streetName: String(f?.properties?.street_name || ''),
+          },
         } as const;
       })
       .filter(Boolean);
     return { type: 'FeatureCollection', features } as any;
   }, [crimeFeatures]);
 
+  // Split into two collections to avoid filter expressions issues on some RN Mapbox builds
+  const heatmapHigh = useMemo(() => ({
+    type: 'FeatureCollection',
+    features: (heatmapPoints?.features || []).filter((f: any) => (f.properties?.riskLevel || '') === 'high'),
+  }) as any, [heatmapPoints]);
+
+  const heatmapModerate = useMemo(() => {
+    const allFeatures = heatmapPoints?.features || [];
+    const moderateFeatures = allFeatures.filter((f: any) => (f.properties?.riskLevel || '') === 'moderate');
+    
+    // Debug logging
+    console.log('🔍 Heatmap debug - Total features:', allFeatures.length);
+    console.log('🔍 Moderate features:', moderateFeatures.length);
+    console.log('🔍 Sample moderate feature:', moderateFeatures[0]);
+    console.log('🔍 All risk levels:', allFeatures.map(f => ({riskLevel: f.properties?.riskLevel, score: f.properties?.score})));
+    
+    return {
+      type: 'FeatureCollection',
+      features: moderateFeatures,
+    } as any;
+  }, [heatmapPoints]);
 
 
+
+  // Derived data: GeoJSON for the currently selected route (for map drawing)
   const routeFeature = useMemo(() => {
     if (!route) return null;
     return {
@@ -259,8 +383,9 @@ export default function MainMapScreen({ navigation }: any) {
     } as any;
   }, [route]);
 
+
+  // Derived data: GeoJSON FeatureCollection of the visible place markers
   const placeFeatures = useMemo(() => {
-    console.log('Creating place features for', nearbyPlaces.length, 'places');
     const features = {
       type: 'FeatureCollection' as const,
       features: nearbyPlaces.map(place => ({
@@ -277,17 +402,15 @@ export default function MainMapScreen({ navigation }: any) {
         }
       }))
     };
-    console.log('Place features created:', features);
     return features;
   }, [nearbyPlaces]);
 
-  // Selected restaurant red circle marker
+  // Derived data: Single red marker for the selected restaurant (highlight)
   const selectedRestaurantFeature = useMemo(() => {
     if (!selectedRestaurant) {
       return { type: 'FeatureCollection' as const, features: [] } as any;
     }
     
-    console.log('Creating red circle marker for selected restaurant:', selectedRestaurant.name);
     return {
       type: 'FeatureCollection' as const,
       features: [{
@@ -306,10 +429,26 @@ export default function MainMapScreen({ navigation }: any) {
     } as any;
   }, [selectedRestaurant]);
 
+  // Function: Creates a crime-aware route within city bounds
+  // - Validates inputs and bounds
+  // - Picks a safe route or tries waypoints to avoid high-risk areas
+  // - Saves the final route for AR usage
   async function onDirections() {
+    if (isSearchingRoute) {
+      return; // Prevent multiple simultaneous route searches
+    }
+    
     try {
+      setIsSearchingRoute(true);
+      
+      // Clear any existing route first when starting a new route calculation
+      if (route) {
+        setRoute(null);
+      }
+      
       if (!destination) {
         Alert.alert('Select destination', 'Search and select a restaurant first.');
+        setIsSearchingRoute(false);
         return;
       }
       
@@ -318,12 +457,14 @@ export default function MainMapScreen({ navigation }: any) {
       if (destLon < BUTUAN_BOUNDS.minLon || destLon > BUTUAN_BOUNDS.maxLon ||
           destLat < BUTUAN_BOUNDS.minLat || destLat > BUTUAN_BOUNDS.maxLat) {
         Alert.alert('Route Error', 'Selected restaurant is outside Butuan City. Please select a restaurant within Butuan City.');
+        setIsSearchingRoute(false);
         return;
       }
       
       const pos = await getCurrentPosition().catch(() => null);
       if (!pos) {
         Alert.alert('Location unavailable', 'Enable location to get directions.');
+        setIsSearchingRoute(false);
         return;
       }
       
@@ -331,6 +472,7 @@ export default function MainMapScreen({ navigation }: any) {
       if (pos.lon < BUTUAN_BOUNDS.minLon - 0.01 || pos.lon > BUTUAN_BOUNDS.maxLon + 0.01 ||
           pos.lat < BUTUAN_BOUNDS.minLat - 0.01 || pos.lat > BUTUAN_BOUNDS.maxLat + 0.01) {
         Alert.alert('Location Error', 'You are too far from Butuan City. This app only provides routes within Butuan City.');
+        setIsSearchingRoute(false);
         return;
       }
       
@@ -341,50 +483,114 @@ export default function MainMapScreen({ navigation }: any) {
       ];
       const dest: Coordinate = destination;
       
-      console.log(`🗺️ Creating route within Butuan City from [${origin[1].toFixed(4)}, ${origin[0].toFixed(4)}] to [${dest[1].toFixed(4)}, ${dest[0].toFixed(4)}]`);
       
-      const routes = await fetchDirectionsAlternatives(origin, dest);
-      // Convert Firestore polygons to algorithm polygons
-      const polys = crimeFeatures.map((f: any) => ({
-        type: 'Polygon',
-        coordinates: f.geometry.coordinates,
-        properties: { averageCrimeScore: Number(f.properties?.averageCrimeScore ?? 0) },
-      }));
-      const { best } = selectCrimeSafeRoute(
-        routes.map((r) => ({ id: r.id, geometry: r.geometry, durationSeconds: r.durationSeconds })),
-        polys as any
-      );
-      setRoute(best);
+      // Store last OD for potential modal-based proceed
+      lastOriginRef.current = origin;
+      lastDestRef.current = dest;
+
+      let routes = await fetchDirectionsAlternatives(origin, dest);
+      // Normalize polygons and split high-risk ones for strict avoidance
+      const { all: allPolys, highRisk } = normalizeFirestoreCrimeFeatures(crimeFeatures);
+
+      // Filter out any route that intersects a high-risk polygon
+      const safeCandidates = routes
+        .map((r) => ({ id: r.id, geometry: r.geometry, durationSeconds: r.durationSeconds }))
+        .filter((c) => !routeIntersectsAnyPolygon(c, highRisk, { intervalMeters: 2, bufferMeters: 4 }));
+
+      let chosen;
+      if (safeCandidates.length > 0) {
+        // Among strictly safe candidates, choose the one with lowest overall exposure
+        chosen = selectCrimeSafeRoute(safeCandidates, allPolys as any).best;
+      } else {
+        // Try to create a detour via a waypoint just outside the first intersecting high-risk polygon
+        const margins = [80, 120, 160, 220];
+        for (const baseRoute of routes) {
+          const offender = getFirstIntersectingPolygon(
+            { id: baseRoute.id, geometry: baseRoute.geometry, durationSeconds: baseRoute.durationSeconds },
+            highRisk,
+          );
+          if (!offender) continue;
+          for (const m of margins) {
+            const waypoints = detourWaypointsAroundPolygon(offender as any, m);
+            let found: any = null;
+            for (const wp of waypoints) {
+              try {
+                const viaRoutes = await fetchDirectionsViaWaypoint(origin, wp as any, dest);
+                const viaSafe = viaRoutes
+                  .map((r) => ({ id: r.id, geometry: r.geometry, durationSeconds: r.durationSeconds }))
+                  .filter((c) => !routeIntersectsAnyPolygon(c, highRisk, { intervalMeters: 2, bufferMeters: 6 }));
+                if (viaSafe.length > 0) {
+                  found = selectCrimeSafeRoute(viaSafe, allPolys as any).best;
+                  break;
+                }
+              } catch (_e) {
+                // try next waypoint
+              }
+            }
+            if (found) { chosen = found; break; }
+          }
+          if (chosen) break;
+        }
+        // If still no strictly-safe candidate, offer user to proceed via lowest-exposure route
+        if (!chosen) {
+          // Precompute the lowest-exposure route and show our custom modal
+          riskyBestRef.current = selectCrimeSafeRoute(
+            routes.map((r) => ({ id: r.id, geometry: r.geometry, durationSeconds: r.durationSeconds })),
+            allPolys as any,
+          ).best;
+          setSafeRouteVisible(true);
+          setIsSearchingRoute(false); // Reset loading state when showing modal
+          return;
+        }
+      }
+      setRoute(chosen);
+
+      // Persist route for Unity AR consumption
+      try {
+        const result = await saveRoute({
+          origin: { lon: origin[0], lat: origin[1] },
+          destination: { lon: dest[0], lat: dest[1] },
+          coordinates: (chosen.geometry?.coordinates ?? []) as [number, number][],
+        });
+        
+      } catch (err) {
+        
+      }
       
-      console.log('✅ Crime-safe route created within Butuan City');
     } catch (e: any) {
       Alert.alert('Routing error', e?.message ?? 'Unable to create route within Butuan City');
+    } finally {
+      setIsSearchingRoute(false);
     }
   }
 
+  // Function: Stops the current route and clears selection
   function onStopRoute() {
     setRoute(null);
     setDestination(null);
     setSelectedRestaurant(null); // Clear the red circle marker
     sheetRef.current?.close();
-    Alert.alert('Route Stopped', 'Navigation has been cancelled.');
   }
 
+  // Function: Trigger routing from the bottom sheet button
   async function onGetDirectionsFromSheet() {
     sheetRef.current?.close();
     await onDirections();
   }
+
+  // Removed AR navigation handler implementation
+
+  // Removed ARCore support check implementation
+
+  // UI: Main screen layout
+  // - Search box at top
+  // - Map view with boundary, heatmap, markers, and route line
+  // - Right-side controls (AR and Heatmap toggle)
+  // - Bottom floating buttons (recenter, my location, stop/route)
+  // - BottomSheet for place details, Logout modal, SafeRoute modal
   return (
     <View style={styles.root}>
-      {/* Header with logo and Logout */}
-      <View style={styles.header}>
-        <Text style={styles.logoText}>SafeBite</Text>
-        <Pressable onPress={() => setLogoutVisible(true)} style={styles.logoutBtn}>
-          <Text style={styles.logoutText}>Logout</Text>
-        </Pressable>
-      </View>
-
-      {/* Enhanced Place Search Box */}
+      {/* UI: Place search box (Mapbox-powered) */}
       <View style={styles.searchContainer}>
         <RestaurantSearchBox
           ref={searchBoxRef}
@@ -408,10 +614,17 @@ export default function MainMapScreen({ navigation }: any) {
         />
       </View>
 
+      {/* UI: Logout button (opens confirmation modal) */}
+      <Pressable onPress={() => setLogoutVisible(true)} style={styles.logoutSquare}>
+        <Text style={styles.logoutIcon}>➜]</Text>
+      </Pressable>
+
       <View style={styles.mapContainer}>
-        <MapboxGL.MapView
+        {isFocused && (
+        <AndroidMapView
           style={StyleSheet.absoluteFill}
           styleURL={MapboxGL.StyleURL.Street}
+          textureMode={true}
           onCameraChanged={(e: any) => {
             const zoom = e?.properties?.zoom ?? 11;
             const center = e?.properties?.center as [number, number] | undefined;
@@ -430,7 +643,7 @@ export default function MainMapScreen({ navigation }: any) {
             }
           }}
           onPress={async (event: any) => {
-            // Reverted: only respond when tapping near an existing marker
+            // UI interaction: react to taps near an existing place marker
             try {
               const pressCoords = event.geometry?.coordinates;
               if (!pressCoords) return;
@@ -448,10 +661,11 @@ export default function MainMapScreen({ navigation }: any) {
                 onPlaceMarkerPress(nearestPlace);
               }
             } catch (error) {
-              console.log('Map press event error:', error);
+              
             }
           }}
         >
+          {/* UI: Camera and layers inside the map (boundary, heatmap, markers, route) */}
           <MapboxGL.Camera
             ref={cameraRef}
             zoomLevel={12}
@@ -460,7 +674,7 @@ export default function MainMapScreen({ navigation }: any) {
             maxZoomLevel={20}
           />
 
-          {/* Butuan City boundary */}
+          {/* UI: Butuan City boundary (white outer + blue dashed inner stroke) */}
           <MapboxGL.ShapeSource id="butuan-boundary" shape={BUTUAN_BOUNDARY_POLYGON}>
             <MapboxGL.LineLayer
               id="butuan-boundary-stroke"
@@ -508,31 +722,101 @@ export default function MainMapScreen({ navigation }: any) {
             />
           )}
 
+          {/* UI: Heatmap layers (split high vs low risk) */}
           <MapboxGL.ShapeSource 
-            key="crime-heat-source"
-            id="crime-heat" 
-            shape={showHeatmap && heatmapPoints?.features ? heatmapPoints : { type: 'FeatureCollection', features: [] }}
+            key="crime-heat-source-high"
+            id="crime-heat-high" 
+            shape={showHeatmap ? heatmapHigh : { type: 'FeatureCollection', features: [] }}
           >
             <MapboxGL.HeatmapLayer
-              key="crime-heat-layer"
-              id="crime-heat-layer"
+              key="crime-heat-layer-high"
+              id="crime-heat-layer-high"
               style={{
-                visibility: showHeatmap && heatmapPoints?.features ? 'visible' : 'none',
-                heatmapWeight: ['interpolate', ['linear'], ['get', 'intensity'], 0, 0, 5, 1],
-                heatmapIntensity: 1.0,
-                heatmapRadius: 24,
-                heatmapColor: [
-                  'interpolate', ['linear'], ['heatmap-density'],
-                  0, 'rgba(0,255,0,0)',
-                  0.5, 'rgba(0,255,0,0.7)',
-                  1, 'rgba(255,0,0,1)'
-                ],
+                visibility: showHeatmap && (heatmapHigh?.features?.length || 0) > 0 ? 'visible' : 'none',
+                heatmapWeight: ['interpolate', ['linear'], ['get', 'count'], 0, 0, 120, 1],
+                heatmapIntensity: ['interpolate', ['linear'], ['zoom'], 10, 1.2, 13, 2.0, 16, 3.0, 18, 3.2],
+                heatmapRadius: ['interpolate', ['linear'], ['zoom'], 10, 28, 12, 36, 14, 48, 16, 90],
+                heatmapOpacity: 1,
+                heatmapColor: ['interpolate', ['linear'], ['heatmap-density'], 0, 'rgba(255,0,0,0)', 0.1, 'rgba(255,0,0,1)', 0.4, 'rgba(255,0,0,1)', 1, 'rgba(255,0,0,1)'],
               }}
             />
           </MapboxGL.ShapeSource>
 
+          <MapboxGL.ShapeSource 
+            key="crime-heat-source-moderate"
+            id="crime-heat-moderate" 
+            shape={showHeatmap ? heatmapModerate : { type: 'FeatureCollection', features: [] }}
+          >
+            <MapboxGL.HeatmapLayer
+              key="crime-heat-layer-moderate"
+              id="crime-heat-layer-moderate"
+              style={{
+                visibility: showHeatmap && (heatmapModerate?.features?.length || 0) > 0 ? 'visible' : 'none',
+                heatmapWeight: ['interpolate', ['linear'], ['get', 'count'], 0, 0, 120, 1],
+                heatmapIntensity: ['interpolate', ['linear'], ['zoom'], 10, 1.2, 13, 2.0, 16, 3.0, 18, 3.2],
+                heatmapRadius: ['interpolate', ['linear'], ['zoom'], 10, 28, 12, 36, 14, 48, 16, 64],
+                heatmapOpacity: 1,
+                heatmapColor: ['interpolate', ['linear'], ['heatmap-density'], 0, 'rgba(255,165,0,0)', 0.1, 'rgba(255,165,0,1)', 0.4, 'rgba(255,165,0,1)', 1, 'rgba(255,165,0,1)'],
+              }}
+            />
+          </MapboxGL.ShapeSource>
 
+          {/* Display average crime scores as text labels on the map - only for moderate and high risk */}
+          <MapboxGL.ShapeSource 
+            key="crime-score-labels-high"
+            id="crime-score-labels-high" 
+            shape={showHeatmap ? heatmapHigh : { type: 'FeatureCollection', features: [] }}
+            onPress={(event) => {
+              console.log('🔍 High risk cluster pressed:', event.nativeEvent?.payload);
+            }}
+          >
+            <MapboxGL.SymbolLayer
+              key="crime-score-labels-high-text"
+              id="crime-score-labels-high-text"
+              style={{
+                visibility: showHeatmap ? 'visible' : 'none',
+                textField: ['get', 'score'],
+                textFont: ['Open Sans Bold', 'Arial Unicode MS Bold'],
+                textSize: 10,
+                textColor: '#000000',
+                textHaloColor: '#FFFFFFFF',
+                textHaloWidth: 2,
+                textAnchor: 'center',
+                textOffset: [0, 0],
+                symbolPlacement: 'point',
+                textAllowOverlap: true,
+                textIgnorePlacement: false
+              }}
+            />
+          </MapboxGL.ShapeSource>
 
+          <MapboxGL.ShapeSource 
+            key="crime-score-labels-moderate"
+            id="crime-score-labels-moderate" 
+            shape={showHeatmap ? heatmapModerate : { type: 'FeatureCollection', features: [] }}
+            onPress={(event) => {
+              console.log('🔍 Moderate risk cluster pressed:', event.nativeEvent?.payload);
+            }}
+          >
+            <MapboxGL.SymbolLayer
+              key="crime-score-labels-moderate-text"
+              id="crime-score-labels-moderate-text"
+              style={{
+                visibility: showHeatmap ? 'visible' : 'none',
+                textField: ['get', 'score'],
+                textFont: ['Open Sans Bold', 'Arial Unicode MS Bold'],
+                textSize: 14,
+                textColor: '#000000',
+                textHaloColor: '#FFFFFFFF',
+                textHaloWidth: 2,
+                textAnchor: 'center',
+                textOffset: [0, 0],
+                symbolPlacement: 'point',
+                textAllowOverlap: true,
+                textIgnorePlacement: false
+              }}
+            />
+          </MapboxGL.ShapeSource>
           <MapboxGL.ShapeSource 
             key="route-source"
             id="route" 
@@ -550,7 +834,7 @@ export default function MainMapScreen({ navigation }: any) {
             />
           </MapboxGL.ShapeSource>
 
-          {/* Place markers */}
+          {/* UI: Place markers (points with labels) */}
           <MapboxGL.ShapeSource 
             key="places-source"
             id="places" 
@@ -600,7 +884,7 @@ export default function MainMapScreen({ navigation }: any) {
             />
           </MapboxGL.ShapeSource>
 
-          {/* Selected restaurant red circle marker */}
+          {/* UI: Red highlight marker for the selected restaurant */}
           <MapboxGL.ShapeSource 
             key="selected-restaurant-source"
             id="selected-restaurant" 
@@ -618,22 +902,38 @@ export default function MainMapScreen({ navigation }: any) {
               }}
             />
           </MapboxGL.ShapeSource>
-        </MapboxGL.MapView>
+        </AndroidMapView>
+        )}
 
+        {/* UI: Legend for heatmap */}
         <HeatmapLegend />
 
+        {/* UI: Right-side stacked buttons (AR launcher and Heatmap toggle) */}
         <View style={styles.toggles}>
-          <Pressable style={styles.square} onPress={() => navigation.navigate('ARView')}>
+          <Pressable 
+            style={[
+              styles.square, 
+              { 
+                backgroundColor: !unityAppInstalled ? '#DC3545' : // Red if Unity app not installed
+                                route ? '#4CAF50' : // Green when route available and Unity app installed
+                                '#B0B0B0' // Gray when Unity app installed but no route
+              }
+            ]} 
+            onPress={onStartARNavigation}
+          >
             <Text style={styles.squareText}>AR</Text>
           </Pressable>
-        </View>
-        <View style={styles.hmRow}>
-            <Text style={styles.hmLabel}>HM</Text>
-            <Switch value={showHeatmap} onValueChange={setShowHeatmap} />
+          <Pressable
+            style={styles.square}
+            onPress={() => setShowHeatmap((v) => !v)}
+          >
+            <Text style={styles.squareText}>HM</Text>
+          </Pressable>
+
         </View>
         
 
-        {/* Recenter FAB */}
+        {/* UI: Recenter button (moves camera to city center) */}
         <Pressable 
           style={styles.fabCenter} 
           onPress={() => {
@@ -647,7 +947,7 @@ export default function MainMapScreen({ navigation }: any) {
           <Text style={styles.fabText}>C</Text>
         </Pressable>
 
-                {/* My Location FAB */}
+        {/* UI: My Location button (moves camera to current user location) */}
         <Pressable 
           style={[styles.fabPosition]} 
           onPress={async () => {
@@ -676,44 +976,70 @@ export default function MainMapScreen({ navigation }: any) {
           <Text style={styles.fabText}>⌖</Text>
         </Pressable>
         
+        {/* UI: Stop Route button or Get Directions button depending on state */}
         {route ? (
           <Pressable style={[styles.stop, { backgroundColor: '#DC3545' }]} onPress={onStopRoute}>
             <Text style={styles.stopText}>Stop Route</Text>
           </Pressable>
         ) : destination ? (
-          <Pressable style={styles.stop} onPress={onDirections}>
-            <Text style={styles.stopText}>Get Crime-Safe Direction</Text>
+          <Pressable 
+            style={[
+              styles.stop, 
+              { backgroundColor: isSearchingRoute ? '#888888' : 'rgb(21, 212, 0)' }
+            ]} 
+            onPress={isSearchingRoute ? undefined : onDirections}
+            disabled={isSearchingRoute}
+          >
+            <Text style={styles.stopText}>
+              {isSearchingRoute ? 'Searching Route...' : 'Get Crime-Safe Direction'}
+            </Text>
           </Pressable>
         ) : null}
         
-        {/* Current Location Display */}
-        {/* {currentLocation && (
-          <View style={styles.locationDisplay}>
-            <Text style={styles.locationText}>
-              📍 {currentLocation[1].toFixed(6)}, {currentLocation[0].toFixed(6)}
-            </Text>
-          </View>
-        )} */}
       </View>
-      <RestaurantBottomSheet ref={sheetRef} onGetDirections={onGetDirectionsFromSheet} />
+      {/* UI: Bottom sheet for place details and a directions button */}
+      <RestaurantBottomSheet ref={sheetRef} onGetDirections={onGetDirectionsFromSheet} isLoadingRoute={isSearchingRoute} />
+      {/* UI: Logout confirmation modal */}
       <LogoutModal visible={logoutVisible} onConfirm={async () => { await signOut(); setLogoutVisible(false); navigation.replace('Login'); }} onCancel={() => setLogoutVisible(false)} />
+      {/* UI: Modal to proceed with lowest-exposure route when strict safe route is not available */}
+      <SafeRouteModal
+        visible={safeRouteVisible}
+        onCancel={() => setSafeRouteVisible(false)}
+        onProceed={() => {
+          if (riskyBestRef.current) {
+            setRoute(riskyBestRef.current);
+            // Also persist when proceeding via modal
+            
+            try {
+              const o = lastOriginRef.current;
+              const d = lastDestRef.current;
+              if (o && d) {
+                saveRoute({
+                  origin: { lon: o[0], lat: o[1] },
+                  destination: { lon: d[0], lat: d[1] },
+                  coordinates: (riskyBestRef.current.geometry?.coordinates ?? []) as [number, number][],
+                }).then(() => {}).catch(() => {});
+              } else {
+                
+              }
+            } catch (e) {
+              
+            }
+          }
+          setSafeRouteVisible(false);
+        }}
+      />
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: '#DDD' },
-  header: { position: 'absolute', top: 10, left: 16, right: 16, zIndex: 11, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  logoText: { color: '#2F80ED', fontWeight: '700', fontSize: 20 },
-  logoutBtn: { backgroundColor: '#D9534F', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 10 },
-  logoutText: { color: '#FFF', fontWeight: '700' },
-  searchContainer: { position: 'absolute', top: 56, left: 16, right: 16, zIndex: 10 },
-  mapPlaceholder: { flex: 1, marginTop: 104, alignItems: 'center', justifyContent: 'center', backgroundColor: '#C7D0D9' },
-  mapContainer: { flex: 1, marginTop: 104, backgroundColor: '#C7D0D9' },
-  toggles: { position: 'absolute', right: 16, top: 150, alignItems: 'center' },
-  hmRow: { position: 'absolute', right: 16, top: 80, backgroundColor: '#000', paddingHorizontal: 8, paddingVertical: 6, borderRadius: 8, width:90 },
-  hmLabel: { color: '#FFF', fontWeight: '700', marginRight: 6 },
-  square: { width: 42, height: 42, backgroundColor: '#000', opacity: 0.85, borderRadius: 6, alignItems: 'center', justifyContent: 'center', marginBottom: 8,  position: 'absolute', right: 0, bottom: 80},
+  searchContainer: { position: 'absolute', top: 35, left: 16, right: 16, zIndex: 10 },
+  mapPlaceholder: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#C7D0D9' },
+  mapContainer: { flex: 1, backgroundColor: '#C7D0D9' },
+  toggles: { position: 'absolute', right: 16, top: 160, alignItems: 'center' },
+  square: { width: 42, height: 42, backgroundColor: '#000', opacity: 0.85, borderRadius: 6, alignItems: 'center', justifyContent: 'center', marginBottom: 8 },
   squareText: { color: '#FFF', fontWeight: '700' },
   stop: { position: 'absolute', bottom: 30, alignSelf: 'center', backgroundColor: 'rgb(21, 212, 0)', paddingHorizontal: 40, paddingVertical: 10, borderRadius: 12 },
   stopText: { color: '#FFF', fontWeight: '700', },
@@ -722,5 +1048,8 @@ const styles = StyleSheet.create({
   fabText: { color: '#FFF', fontSize: 24, fontWeight: '700', marginTop: -2 },
   locationDisplay: { position: 'absolute', top: 16, left: 16, backgroundColor: 'rgba(0,0,0,0.7)', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8 },
   locationText: { color: '#FFF', fontSize: 12, fontFamily: 'monospace' },
+  logoutSquare: { position: 'absolute', right: 16, top: 100, width: 44, height: 44, backgroundColor: 'rgb(255, 0, 0)', borderRadius: 8, alignItems: 'center', justifyContent: 'center', zIndex: 9 },
+  logoutIcon: { color: '#FFF', fontSize: 15, fontWeight: '700' },
 });
+
 

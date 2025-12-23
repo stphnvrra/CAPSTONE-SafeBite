@@ -1,13 +1,16 @@
+// Registration screen; UI is a centered card with full name/username/password and Submit/Login
 import React, { useState } from 'react';
 import { View, Text, TextInput, Pressable, Alert, StyleSheet } from 'react-native';
 import { Fonts } from '../theme/typography';
 import { registerWithUsername } from '../lib/firebase';
 
+// Renders account creation form and registers a username-based user profile
 export default function RegisterScreen({ navigation }: any) {
   const [fullName, setFullName] = useState('');
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
 
+  // Validates inputs and creates a Firebase Auth user with reserved username mapping
   const onSubmit = async () => {
     if (!fullName || !username || !password) return Alert.alert('Validation', 'Fill all fields');
     try {

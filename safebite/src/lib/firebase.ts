@@ -1,83 +1,110 @@
-import { getApps } from '@react-native-firebase/app';
+// Firebase helpers for auth, Firestore access, and crime zone data formatting
+import { getApps, initializeApp } from '@react-native-firebase/app';
 import auth from '@react-native-firebase/auth';
 import firestore from '@react-native-firebase/firestore';
 
-// Call once at app start (auto-initialized by @react-native-firebase on RN CLI projects)
+// Initializes Firebase app instance if not already created and returns the active app
 export function ensureFirebase(): any {
   const apps = getApps?.() ?? [];
-  return apps[0];
-}
-
-export async function signInWithEmail(email: string, password: string) {
-  await auth().signInWithEmailAndPassword(email, password);
-}
-
-export async function registerWithEmail(email: string, password: string, profile: { fullName?: string }) {
-  const res = await auth().createUserWithEmailAndPassword(email, password);
-  await firestore().collection('users').doc(res.user.uid).set({
-    fullName: profile.fullName ?? '',
-    email,
-    createdAt: firestore.FieldValue.serverTimestamp(),
-  });
+  if (!apps.length) {
+    try {
+      (initializeApp as any)();
+    } catch (_e) {
+      // no-op if already initialized or auto-init occurs
+    }
+  }
+  return (getApps?.() ?? [])[0];
 }
 
 export async function signOut() {
+  // Signs out the current authenticated user
   return auth().signOut();
 }
 
 export function getCurrentUser() {
+  // Returns the current authenticated Firebase user or null
   return auth().currentUser;
 }
 
-export async function fetchUserProfile(uid: string): Promise<{ fullName?: string; email?: string } | null> {
-  const snap = await firestore().collection('users').doc(uid).get();
-  return snap.exists ? ((snap.data() as any) ?? null) : null;
-}
+export type GeoJsonPolygonLike = { type: 'Polygon'; coordinates: number[][][] } | { type: 'MultiPolygon'; coordinates: number[][][][] };
 
 export type CrimeZone = {
   type: 'Feature';
-  geometry: { type: 'Polygon'; coordinates: number[][][] };
+  geometry: GeoJsonPolygonLike;
   properties: { averageCrimeScore: number; street_name?: string; riskLevel?: string };
 };
 
+
+// Parses common GeoJSON wrappers and returns a normalized Polygon or MultiPolygon
+function normalizeGeoJsonPolygon(input: any): GeoJsonPolygonLike | null {
+  try {
+    const value = typeof input === 'string' ? JSON.parse(input) : input;
+    if (!value) return null;
+    // Accept Feature wrapper
+    if (value.type === 'Feature' && value.geometry) {
+      return normalizeGeoJsonPolygon(value.geometry);
+    }
+    // Accept FeatureCollection wrapper (use first feature)
+    if (value.type === 'FeatureCollection' && Array.isArray(value.features) && value.features.length > 0) {
+      return normalizeGeoJsonPolygon(value.features[0]?.geometry);
+    }
+    if (value.type === 'Polygon' && Array.isArray(value.coordinates)) {
+      const coords = value.coordinates;
+      // Ensure coordinates shape is array of rings -> array of positions
+      if (!Array.isArray(coords) || !Array.isArray(coords[0])) return null;
+      return { type: 'Polygon', coordinates: coords } as GeoJsonPolygonLike;
+    }
+    if (value.type === 'MultiPolygon' && Array.isArray(value.coordinates)) {
+      const coords = value.coordinates;
+      if (!Array.isArray(coords) || !Array.isArray(coords[0])) return null;
+      return { type: 'MultiPolygon', coordinates: coords } as GeoJsonPolygonLike;
+    }
+    return null;
+  } catch (_e) {
+    return null;
+  }
+}
+
 export async function fetchCrimeZones(): Promise<CrimeZone[]> {
+  // Retrieves all crime zone documents and maps them to GeoJSON features
   const snap = await firestore().collection('crimeZones').get();
   return snap.docs
     .map((d) => d.data() as any)
-    .filter((d) => d && d.geoJsonPolygon)
-    .map((d) => ({
+    .map((d) => ({ data: d, geometry: normalizeGeoJsonPolygon(d?.geoJsonPolygon) }))
+    .filter((x) => !!x.geometry)
+    .map((x) => ({
       type: 'Feature',
-      geometry: d.geoJsonPolygon,
-      properties: { averageCrimeScore: Number(d.averageCrimeScore || 0), street_name: d.street_name, riskLevel: d.riskLevel },
+      geometry: x.geometry as GeoJsonPolygonLike,
+      properties: { averageCrimeScore: Number(x.data?.averageCrimeScore || 0), street_name: x.data?.street_name, riskLevel: x.data?.riskLevel },
     }));
 }
 
 export async function fetchCrimeZonesByBBox(minLon: number, minLat: number, maxLon: number, maxLat: number): Promise<CrimeZone[]> {
-  // Firestore has no native geo-bbox query for polygons; this demo filters client-side after fetching.
+  // Filters crime zones client-side by bounding box due to lack of polygon geo queries
   const all = await fetchCrimeZones();
   return all.filter((f) => {
-    const coords = f.geometry.coordinates?.[0] || [];
-    return coords.some(([lon, lat]: number[]) => lon >= minLon && lon <= maxLon && lat >= minLat && lat <= maxLat);
+    const rings: number[][] = [];
+    if (f.geometry.type === 'Polygon') {
+      const poly = f.geometry.coordinates as number[][][];
+      for (const ring of poly) rings.push(...ring);
+    } else if (f.geometry.type === 'MultiPolygon') {
+      const mpoly = f.geometry.coordinates as number[][][][];
+      for (const poly of mpoly) {
+        for (const ring of poly) rings.push(...ring);
+      }
+    }
+    return rings.some((pos) => Array.isArray(pos) && pos.length >= 2 && pos[0] >= minLon && pos[0] <= maxLon && pos[1] >= minLat && pos[1] <= maxLat);
   });
 }
 
-// Placeholder wrappers for Firebase. Wire these to @react-native-firebase modules in the RN project.
-
-export type AuthCredentials = { usernameOrEmail: string; password: string };
-
-export async function signInWithCredentials(_: AuthCredentials): Promise<void> {
-  // TODO: connect to firebase/auth
-}
-
-export async function registerUser(_: { fullName: string; username: string; password: string }): Promise<void> {
-  // TODO: connect to firebase/auth and create users/{uid}
-}
 
 // ---- Username-first helpers ----
+// Sanitizes a username to a lowercase, app-safe identifier used across features
 function normalizeUsername(username: string): string {
   return username.trim().toLowerCase().replace(/[^a-z0-9._-]/g, '-');
 }
 
+// Converts a username into an app-scoped synthetic email for Firebase Auth
 function usernameToAuthEmail(username: string): string {
   const u = normalizeUsername(username);
   // Synthetic, app-scoped email for Firebase Auth
@@ -85,6 +112,7 @@ function usernameToAuthEmail(username: string): string {
 }
 
 export async function isUsernameTaken(username: string): Promise<boolean> {
+  // Checks if usernames/{username} mapping exists to prevent duplicates
   const doc = await firestore().collection('usernames').doc(normalizeUsername(username)).get();
   // @react-native-firebase types may expose `exists` as a function or boolean depending on version
   const exists = typeof (doc as any).exists === 'function' ? (doc as any).exists() : (doc as any).exists;
@@ -99,18 +127,38 @@ export async function registerWithUsername(username: string, password: string, p
   }
   const email = usernameToAuthEmail(uname);
   const res = await auth().createUserWithEmailAndPassword(email, password);
-  // Create user profile
-  await firestore().collection('users').doc(res.user.uid).set({
-    username: uname,
-    fullName: profile.fullName ?? '',
-    email,
-    createdAt: firestore.FieldValue.serverTimestamp(),
-  });
+  
+  // Add small delay to ensure auth state propagates to Firestore
+  await new Promise(resolve => setTimeout(resolve, 500));
+  
+  // Create user profile with retry logic
+  try {
+    await firestore().collection('users').doc(res.user.uid).set({
+      username: uname,
+      fullName: profile.fullName ?? '',
+      email,
+      createdAt: firestore.FieldValue.serverTimestamp(),
+    });
+  } catch (error: any) {
+    // Retry once after delay
+    await new Promise(resolve => setTimeout(resolve, 1000));
+    await firestore().collection('users').doc(res.user.uid).set({
+      username: uname,
+      fullName: profile.fullName ?? '',
+      email,
+      createdAt: firestore.FieldValue.serverTimestamp(),
+    });
+  }
+  
   // Reserve username -> uid mapping
-  await firestore().collection('usernames').doc(uname).set({ uid: res.user.uid, createdAt: firestore.FieldValue.serverTimestamp() });
+  await firestore().collection('usernames').doc(uname).set({ 
+    uid: res.user.uid, 
+    createdAt: firestore.FieldValue.serverTimestamp() 
+  });
 }
 
 export async function signInWithUsername(username: string, password: string) {
+  // Authenticates using the username-based synthetic email format
   const email = usernameToAuthEmail(username);
   await auth().signInWithEmailAndPassword(email, password);
 }

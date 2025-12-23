@@ -1,12 +1,15 @@
+// Login screen; UI is a centered card with username/password inputs and Login/Register buttons
 import React, { useState } from 'react';
 import { View, Text, TextInput, Pressable, Alert, StyleSheet } from 'react-native';
 import { Fonts } from '../theme/typography';
 import { signInWithUsername } from '../lib/firebase';
 
+// Renders username/password login and navigates to the main map on success
 export default function LoginScreen({ navigation }: any) {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
 
+  // Validates inputs and signs in using username helper backed by Firebase Auth
   const onLogin = async () => {
     if (!username || !password) return Alert.alert('Validation', 'Enter username and password');
     try {

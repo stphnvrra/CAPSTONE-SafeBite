@@ -1,11 +1,18 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.safebite">
+
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Removed AR-related camera permission -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.HIGH_SAMPLING_RATE_SENSORS" />
+    <!-- Location permissions for user location features -->
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
-    <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
-    <uses-permission android:name="android.permission.CAMERA" />
-    <uses-feature android:name="android.hardware.camera.ar" android:required="false" />
-    <uses-feature android:glEsVersion="0x00030000" android:required="true" />
+
+    <!-- Query Unity AR app for launching -->
+    <queries>
+        <package android:name="com.safebitear" />
+    </queries>
+
 
     <application
       android:name=".MainApplication"
@@ -13,6 +20,7 @@
       android:icon="@mipmap/ic_launcher"
       android:roundIcon="@mipmap/ic_launcher_round"
       android:allowBackup="false"
+      android:hardwareAccelerated="true"
       android:theme="@style/AppTheme"
       android:supportsRtl="true">
       <activity
@@ -21,11 +29,13 @@
         android:configChanges="keyboard|keyboardHidden|orientation|screenLayout|screenSize|smallestScreenSize|uiMode"
         android:launchMode="singleTask"
         android:windowSoftInputMode="adjustResize"
+        android:hardwareAccelerated="true"
         android:exported="true">
         <intent-filter>
             <action android:name="android.intent.action.MAIN" />
             <category android:name="android.intent.category.LAUNCHER" />
         </intent-filter>
       </activity>
+      
     </application>
 </manifest>

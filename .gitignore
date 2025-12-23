@@ -1,31 +1,68 @@
-# Operating System Files
-.DS_Store
-.DS_Store?
-._*
-.Spotlight-V100
-.Trashes
-ehthumbs.db
-Thumbs.db
+# Environment variables
+.env
+.env.local
+.env.*.local
+.env.*
+!.env.example
+!.env.template
+# Allow .env.example and .env.template as templates (these should be committed)
 
-# IDE and Editor Files
-.vscode/
-.idea/
-*.swp
-*.swo
-*~
-.project
-.classpath
-.settings/
+# Firebase configuration files (contains API keys and credentials)
+# Service account files (admin credentials)
+**/*firebase-adminsdk*.json
+admin/*-firebase-adminsdk*.json
 
-# Node.js and npm
+# Client configuration files (contains API keys)
+**/google-services.json
+**/GoogleService-Info.plist
+!**/google-services.json.example
+!**/GoogleService-Info.plist.example
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+venv/
+env/
+ENV/
+.venv
+admin/venv/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Node
 node_modules/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+.pnpm-debug.log*
 .npm
-.eslintcache
+.yarn/
+.pnp.*
+.yarn/cache
+.yarn/unplugged
+.yarn/build-state.yml
+.yarn/install-state.gz
 
-# React Native and Expo
+# React Native
 .expo/
 .expo-shared/
 *.jks
@@ -34,75 +71,150 @@ yarn-error.log*
 *.key
 *.mobileprovision
 *.orig.*
-web-build/
+.watchmanconfig
+watchman-cookie-*
+react-native.config.js.backup
+*.pbxproj.user
+*.xcworkspace/xcuserdata/
 
-# Build outputs
-build/
-dist/
+# Android
+*.apk
+*.ap_
+*.aab
+*.dex
+*.class
+bin/
+gen/
 out/
-*.tgz
-*.tar.gz
-
-# Logs
-logs/
-*.log
-lerna-debug.log*
-
-# Runtime data
-pids/
-*.pid
-*.seed
-*.pid.lock
-
-# Coverage directory used by tools like istanbul
-coverage/
-*.lcov
-
-# Environment variables
-.env
-.env.local
-.env.development.local
-.env.test.local
-.env.production.local
-
-# Temporary files
-tmp/
-temp/
-*.tmp
-*.temp
-
-# Documentation build
-docs/build/
-site/
-
-# Backup files
-*.bak
-*.backup
-*.old
-
-# Archive files
+build/
+.gradle/
+local.properties
+*.iml
+*.hprof
+.cxx/
+*.keystore
+!debug.keystore
+app/release/
+app/build/
+proguard/
+.navigation/
+captures/
+.externalNativeBuild
+*.jar
+!gradle-wrapper.jar
+*.war
+*.nar
+*.ear
 *.zip
+*.tar
 *.rar
 *.7z
-*.tar
 *.gz
 
-# Package files
-*.deb
-*.rpm
-*.dmg
-*.pkg
+# iOS
+*.pbxuser
+!default.pbxuser
+*.mode1v3
+!default.mode1v3
+*.mode2v3
+!default.mode2v3
+*.perspectivev3
+!default.perspectivev3
+xcuserdata/
+*.xccheckout
+*.moved-aside
+DerivedData
+*.hmap
+*.ipa
+*.xcuserstate
+project.xcworkspace
 
-# Database files
-*.db
-*.sqlite
-*.sqlite3
+# IDE
+.vscode/
+.idea/
+*.code-workspace
+.history/
 
-# Cache directories
+# Logs
+*.log
+logs/
+*.log.*
+metro.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.temp
 .cache/
-.parcel-cache/
-.next/
-.nuxt/
+*.bak
+*.backup
+*.swp
+*.swo
+*~
+.DS_Store?
 
-# Testing
-.nyc_output/
+# Unity (AR Navigation)
+*.csproj
+*.unityproj
+*.sln
+*.suo
+*.user
+*.userprefs
+*.pidb
+*.booproj
+*.svd
+*.pdb
+*.mdb
+*.opendb
+*.VC.db
+Library/
+Temp/
+Obj/
+Log/
+UserSettings/
+*.stackdump
+[Dd]ebug/
+[Dd]ebugPublic/
+[Rr]elease/
+[Rr]eleases/
+x64/
+x86/
+[Ww][Ii][Nn]32/
+[Aa][Rr][Mm]/
+[Aa][Rr][Mm]64/
+bld/
+[Bb]in/
+[Oo]bj/
+[Ll]og/
+[Ll]ogs/
+
+# MacOS
+.AppleDouble
+.LSOverride
+Icon
+._*
+.DocumentRevisions-V100
+.fseventsd
+.Spotlight-V100
+.TemporaryItems
+.Trashes
+.VolumeIcon.icns
+.com.apple.timemachine.donotpresent
+
+# Windows
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+ehthumbs_vista.db
+*.stackdump
+[Dd]esktop.ini
+$RECYCLE.BIN/
+*.cab
+*.msi
+*.msix
+*.msm
+*.msp
+*.lnk

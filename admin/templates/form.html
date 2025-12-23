@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{{ 'Add New Street' if mode == 'add' else 'Edit Street' }}</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+      body { background-color: #f5f7fb; }
+      .hint { font-size: .9rem; color: #6c757d; }
+      .coord-card { min-height: 120px; }
+    </style>
+  </head>
+  <body>
+    <nav class="navbar navbar-expand-lg navbar-dark bg-primary">
+      <div class="container-fluid">
+        <a class="navbar-brand" href="/">Crime Mapping Admin</a>
+        <div class="ms-auto">
+          <form method="post" action="/logout" class="d-inline">
+            <button class="btn btn-sm btn-light">Logout</button>
+          </form>
+        </div>
+      </div>
+    </nav>
+
+    <div class="container my-4">
+      <div class="d-flex justify-content-between align-items-center mb-3">
+        <h5 class="mb-0">{{ 'Add New Street' if mode == 'add' else 'Edit Street' }}</h5>
+        <a href="/" class="btn btn-sm btn-outline-secondary">Back</a>
+      </div>
+
+      <form method="post">
+        <div class="row g-3">
+          <div class="col-12 col-lg-6">
+            <label class="form-label">Street Name *</label>
+            <input type="text" name="street_name" class="form-control" placeholder="Enter the full street name" value="{{ defaults.street_name }}" required>
+          </div>
+          <div class="col-12 col-lg-6">
+            <label class="form-label">Average Crime Weight *</label>
+            <input type="number" step="0.1" min="0" name="averageCrimeScore" class="form-control" placeholder="e.g., 1.0" value="{{ defaults.averageCrimeScore }}" required>
+          </div>
+
+          <div class="col-12 col-lg-6">
+            <label class="form-label">Start Point (Long, Lat)</label>
+            <div class="row g-2">
+              <div class="col-6">
+                <input type="number" step="0.000000001" name="start_lng" class="form-control" placeholder="Lng" value="{{ defaults.start_lng }}">
+              </div>
+              <div class="col-6">
+                <input type="number" step="0.000000001" name="start_lat" class="form-control" placeholder="Lat" value="{{ defaults.start_lat }}">
+              </div>
+            </div>
+          </div>
+          <div class="col-12 col-lg-6">
+            <label class="form-label">End Point (Long, Lat)</label>
+            <div class="row g-2">
+              <div class="col-6">
+                <input type="number" step="0.000000001" name="end_lng" class="form-control" placeholder="Lng" value="{{ defaults.end_lng }}">
+              </div>
+              <div class="col-6">
+                <input type="number" step="0.000000001" name="end_lat" class="form-control" placeholder="Lat" value="{{ defaults.end_lat }}">
+              </div>
+            </div>
+          </div>
+
+          <div class="col-12">
+            <label class="form-label">Risk Level</label>
+            <select class="form-select" name="riskLevel">
+              <option value="low" {% if defaults.riskLevel == 'low' %}selected{% endif %}>Low</option>
+              <option value="moderate" {% if defaults.riskLevel == 'moderate' %}selected{% endif %}>Moderate</option>
+              <option value="high" {% if defaults.riskLevel == 'high' %}selected{% endif %}>High</option>
+            </select>
+          </div>
+
+          <div class="col-12">
+            <label class="form-label">Polygon Coordinates *</label>
+            <div class="alert alert-primary py-2 hint">Enter up to 5 coordinate pairs (longitude, latitude) to define the polygon boundary. The first and last point will be closed automatically.</div>
+          </div>
+
+          {% for idx in range(5) %}
+          <div class="col-12 col-lg-6">
+            <div class="card shadow-sm coord-card">
+              <div class="card-body">
+                <label class="form-label">Coordinate {{ idx + 1 }}</label>
+                <div class="row g-2">
+                  <div class="col-6">
+                    <input type="number" step="0.000000001" name="p{{ idx + 1 }}_lng" class="form-control" placeholder="Lng" value="{{ defaults.points[idx][0] if defaults.points[idx] else '' }}">
+                  </div>
+                  <div class="col-6">
+                    <input type="number" step="0.000000001" name="p{{ idx + 1 }}_lat" class="form-control" placeholder="Lat" value="{{ defaults.points[idx][1] if defaults.points[idx] else '' }}">
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+          {% endfor %}
+
+          <div class="col-12 d-flex justify-content-end gap-2">
+            <a href="/" class="btn btn-outline-secondary">Cancel</a>
+            <button type="submit" class="btn btn-primary">Save Street</button>
+          </div>
+        </div>
+      </form>
+    </div>
+
+    <script>
+      document.addEventListener('DOMContentLoaded', function() {
+        const p1Lng = document.querySelector('input[name="p1_lng"]');
+        const p1Lat = document.querySelector('input[name="p1_lat"]');
+        const p5Lng = document.querySelector('input[name="p5_lng"]');
+        const p5Lat = document.querySelector('input[name="p5_lat"]');
+
+        if (!p1Lng || !p1Lat || !p5Lng || !p5Lat) return;
+
+        // Make Coordinate 5 read-only since it mirrors Coordinate 1
+        p5Lng.readOnly = true;
+        p5Lat.readOnly = true;
+
+        const syncP1ToP5 = () => {
+          p5Lng.value = p1Lng.value;
+          p5Lat.value = p1Lat.value;
+        };
+
+        // Initial sync on page load (for edit mode with defaults)
+        syncP1ToP5();
+
+        // Mirror changes from Coordinate 1 to Coordinate 5
+        ['input','change'].forEach(evt => {
+          p1Lng.addEventListener(evt, syncP1ToP5);
+          p1Lat.addEventListener(evt, syncP1ToP5);
+        });
+      });
+    </script>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+  </body>
+  </html>
+
+

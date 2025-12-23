@@ -15,11 +15,13 @@ export type RestaurantInfo = {
 
 export type RestaurantBottomSheetRef = { open: (info: RestaurantInfo) => void; close: () => void };
 
-const RestaurantBottomSheet = forwardRef<RestaurantBottomSheetRef, { onGetDirections: () => void }>(
-  ({ onGetDirections }, ref) => {
+// Shows restaurant details; UI is a slide-up bottom sheet with name, meta, and a primary button
+const RestaurantBottomSheet = forwardRef<RestaurantBottomSheetRef, { onGetDirections: () => void; isLoadingRoute?: boolean }>(
+  ({ onGetDirections, isLoadingRoute = false }, ref) => {
     const [info, setInfo] = useState<RestaurantInfo | null>(null);
     const [visible, setVisible] = useState(false);
 
+    // Exposes imperative methods for opening with data and closing the sheet
     useImperativeHandle(ref, () => ({
       open: (i: RestaurantInfo) => {
         setInfo(i);
@@ -38,15 +40,17 @@ const RestaurantBottomSheet = forwardRef<RestaurantBottomSheetRef, { onGetDirect
         <TouchableWithoutFeedback onPress={() => setVisible(false)}>
           <View style={styles.backdrop} />
         </TouchableWithoutFeedback>
-        <View style={styles.sheet}>
+        <View style={styles.sheet}> 
           <View style={styles.container}>
             <Text style={styles.title}>{info?.name ?? 'Restaurant'}</Text>
             
-            {/* Display establishment type and cuisine */}
+            {/* Display establishment cuisine */}
             {!!info?.amenity && (
               <Text style={styles.meta}>
-                {info.amenity.charAt(0).toUpperCase() + info.amenity.slice(1).replace('_', ' ')}
-                {info?.cuisine && ` • ${info.cuisine}`}
+                 🍽️{'  '}
+                {Array.isArray(info.amenity)
+                  ? info.amenity.map((item: string, idx: number) => (idx === 0 ? item : `, ${item}`)).join('')
+                  : info.amenity}
               </Text>
             )}
             
@@ -55,13 +59,19 @@ const RestaurantBottomSheet = forwardRef<RestaurantBottomSheetRef, { onGetDirect
             {!!info?.address && <Text style={styles.meta}>📍 {info.address}</Text>}
             
             <Pressable
-              style={styles.primary}
-              onPress={() => {
+              style={[
+                styles.primary,
+                { backgroundColor: isLoadingRoute ? '#888888' : 'rgb(21, 212, 0)' }
+              ]}
+              onPress={isLoadingRoute ? undefined : () => {
                 setVisible(false);
                 onGetDirections();
               }}
+              disabled={isLoadingRoute}
             >
-              <Text style={styles.primaryText}>Get Crime‑Safe Direction</Text>
+              <Text style={styles.primaryText}>
+                {isLoadingRoute ? 'Searching Route...' : 'Get Crime‑Safe Direction'}
+              </Text>
             </Pressable>
           </View>
         </View>

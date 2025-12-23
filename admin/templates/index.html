@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Crime Mapping Dashboard</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+      body { background-color: #f5f7fb; }
+      .card-metric .icon { font-size: 28px; }
+      .table td, .table th { vertical-align: middle; }
+    </style>
+  </head>
+  <body>
+    <nav class="navbar navbar-expand-lg navbar-dark bg-primary">
+      <div class="container-fluid">
+        <span class="navbar-brand mb-0 h1">Crime Mapping Dashboard</span>
+        <div class="ms-auto">
+          <form method="post" action="/logout" class="d-inline">
+            <button class="btn btn-sm btn-light">Logout</button>
+          </form>
+        </div>
+      </div>
+    </nav>
+
+    <div class="container my-4">
+      <div class="row g-3">
+        <div class="col-lg-3 col-md-6">
+          <div class="card card-metric shadow-sm">
+            <div class="card-body d-flex justify-content-between align-items-center">
+              <div>
+                <div class="text-muted small">Total Streets</div>
+                <div class="display-6 fw-bold">{{ total }}</div>
+              </div>
+              <div class="icon">📍</div>
+            </div>
+          </div>
+        </div>
+        <div class="col-lg-3 col-md-6">
+          <div class="card card-metric shadow-sm">
+            <div class="card-body d-flex justify-content-between align-items-center">
+              <div>
+                <div class="text-muted small">High Risk</div>
+                <div class="display-6 fw-bold">{{ high_count }}</div>
+              </div>
+              <div class="icon">🔴</div>
+            </div>
+          </div>
+        </div>
+        <div class="col-lg-3 col-md-6">
+          <div class="card card-metric shadow-sm">
+            <div class="card-body d-flex justify-content-between align-items-center">
+              <div>
+                <div class="text-muted small">Moderate Risk</div>
+                <div class="display-6 fw-bold">{{ moderate_count }}</div>
+              </div>
+              <div class="icon">🟠</div>
+            </div>
+          </div>
+        </div>
+        <div class="col-lg-3 col-md-6">
+          <div class="card card-metric shadow-sm">
+            <div class="card-body d-flex justify-content-between align-items-center">
+              <div>
+                <div class="text-muted small">Low Risk</div>
+                <div class="display-6 fw-bold">{{ low_count }}</div>
+              </div>
+              <div class="icon">🟢</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card mt-4 shadow-sm">
+        <div class="card-header d-flex justify-content-between align-items-center">
+          <span class="fw-semibold">Crime Streets Database</span>
+          <a class="btn btn-sm btn-primary" href="/add">+ Add New Street</a>
+        </div>
+        <div class="table-responsive">
+          <table class="table table-hover mb-0">
+            <thead class="table-light">
+              <tr>
+                <th style="width: 70px;">#</th>
+                <th style="width: 260px;">Document ID</th>
+                <th>Street Name</th>
+                <th style="width: 160px;">Average Crime Weight</th>
+                <th style="width: 120px;">Risk Level</th>
+                <th style="width: 140px;">GeoJSON</th>
+                <th style="width: 180px;">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for it in items %}
+              <tr>
+                <td>{{ loop.index }}</td>
+                <td class="font-monospace small">{{ it.id }}</td>
+                <td class="text-capitalize">{{ it.street_name }}</td>
+                <td>{{ '%.1f'|format(it.averageCrimeScore or 0) }}</td>
+                <td>
+                  {% if (it.riskLevel or '').lower() == 'high' %}
+                    <span class="badge bg-danger">high</span>
+                  {% elif (it.riskLevel or '').lower() == 'moderate' %}
+                    <span class="badge" style="background-color: #ff6600; color: white;">moderate</span>
+                  {% else %}
+                    <span class="badge bg-success">low</span>
+                  {% endif %}
+                </td> 
+                <td>{% if it.has_geo %}✔️{% else %}—{% endif %}</td>
+                <td>
+                  <a class="btn btn-sm btn-outline-primary" href="/edit/{{ it.id }}">Edit</a>
+                  <form class="d-inline" method="post" action="/delete/{{ it.id }}" onsubmit="return confirm('Delete this street?');">
+                    <button type="submit" class="btn btn-sm btn-outline-danger">Delete</button>
+                  </form>
+                </td>
+              </tr>
+              {% else %}
+              <tr>
+                <td colspan="7" class="text-center text-muted py-4">No streets yet. Click "Add New Street" to create one.</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+  </body>
+  </html>
+
+

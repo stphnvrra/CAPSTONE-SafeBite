@@ -1,3 +1,5 @@
+// TypeScript configuration - tells TypeScript how to compile the code
+// Sets up React Native specific settings and includes all source files
 {
   "extends": "@react-native/typescript-config",
   "compilerOptions": {
@@ -9,5 +11,6 @@
     "types": ["react", "react-native"],
     "baseUrl": "."
   },
-  "include": ["App.tsx", "src/**/*"]
+  "include": ["App.tsx", "src/**/*"],
+  "typeRoots": ["./node_modules/@types", "./src/types"]
 }

@@ -1,3 +1,4 @@
+// App configuration file - defines the app name and display name for React Native
 {
   "name": "safebite",
   "displayName": "safebite"
