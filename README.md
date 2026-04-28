@@ -7,8 +7,6 @@
 
 **SafeBite** is a comprehensive mobile and web platform designed to help people find safe routes to restaurants in Butuan City, Philippines. By leveraging crime data, interactive mapping, and Augmented Reality (AR) navigation, SafeBite ensures users can avoid high-risk areas while walking to their destinations.
 
-🔗 **Repository:** [https://github.com/stphnvrra/CAPSTONE-SafeBite.git](https://github.com/stphnvrra/CAPSTONE-SafeBite.git)
-
 ---
 
 ## 📑 Table of Contents
